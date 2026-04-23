@@ -346,6 +346,38 @@ button {
   position: sticky;
   top: 20px;
   height: fit-content;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.dashboard-side--hidden {
+  display: none;
+}
+
+.dashboard-page:has(.dashboard-side--hidden) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.sidebar-toggle:hover {
+  color: var(--fg);
+  background: var(--panel-strong);
 }
 
 .side-card {

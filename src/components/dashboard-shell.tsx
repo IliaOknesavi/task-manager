@@ -19,6 +19,8 @@ import {
   GitBranchPlus,
   LayoutGrid,
   ListTodo,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RotateCcw,
   Sparkles,
@@ -660,6 +662,7 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
   const [statusMessage, setStatusMessage] = useState<string>();
   const [drawer, setDrawer]         = useState<DrawerState | null>(null);
   const [showReset, setShowReset]   = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -1062,7 +1065,16 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
           {view === "gantt"    && <GanttView projects={filteredState.projects} onBarClick={openEdit} onDateChange={handleGanttDateChange} />}
         </section>
 
-        <aside className="dashboard-side">
+        <button
+          className="sidebar-toggle"
+          onClick={() => setSidebarOpen((v) => !v)}
+          title={sidebarOpen ? "Скрыть панель" : "Показать панель"}
+          type="button"
+        >
+          {sidebarOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+        </button>
+
+        <aside className={`dashboard-side${sidebarOpen ? "" : " dashboard-side--hidden"}`}>
           {/* Codex focus */}
           <section className="side-card focus-card">
             <div className="side-card-header">
