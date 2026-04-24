@@ -1133,6 +1133,50 @@ button {
   cursor: pointer;
 }
 
+/* ── Drawer mobile tabs ─────────────────────────────────────── */
+.drawer-tabs {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .drawer-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 16px 12px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+
+  .drawer-tab {
+    flex: 1;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .drawer-tab--active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .drawer-pane--hidden {
+    display: none !important;
+  }
+
+  .drawer-notes,
+  .drawer-meta {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
 /* ── Clickable cards ────────────────────────────────────────── */
 
 .project-card--clickable {

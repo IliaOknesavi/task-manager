@@ -339,6 +339,7 @@ function ProjectDrawer({
   onDelete: (id: string) => Promise<void>;
   onLogProgress: (projectId: string, summary: string, minutes: number, progressDelta: number) => Promise<void>;
 }) {
+  const [drawerTab, setDrawerTab] = useState<"form" | "notes">("form");
   const [form, setForm] = useState<ProjectFormState>({
     name:         project.name,
     emoji:        project.emoji ?? "✨",
@@ -446,9 +447,27 @@ function ProjectDrawer({
           </div>
         </div>
 
+        {/* Mobile tab switcher */}
+        <div className="drawer-tabs">
+          <button
+            className={`drawer-tab ${drawerTab === "form" ? "drawer-tab--active" : ""}`}
+            type="button"
+            onClick={() => setDrawerTab("form")}
+          >
+            Details
+          </button>
+          <button
+            className={`drawer-tab ${drawerTab === "notes" ? "drawer-tab--active" : ""}`}
+            type="button"
+            onClick={() => setDrawerTab("notes")}
+          >
+            Notes
+          </button>
+        </div>
+
         <div className="drawer-content">
           {/* Left: metadata form */}
-          <form className="drawer-meta stack-form" onSubmit={handleMetaSave}>
+          <form className={`drawer-meta stack-form${drawerTab === "notes" ? " drawer-pane--hidden" : ""}`} onSubmit={handleMetaSave}>
             {/* Property pills row */}
             <div className="prop-row">
               <span className="prop-label">Status</span>
@@ -571,7 +590,7 @@ function ProjectDrawer({
           </form>
 
           {/* Right: MD editor / preview */}
-          <div className="drawer-notes">
+          <div className={`drawer-notes${drawerTab === "form" ? " drawer-pane--hidden" : ""}`}>
             <div className="drawer-notes-header">
               <span className="eyebrow">Notes · MD file</span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
