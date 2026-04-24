@@ -770,6 +770,25 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
     };
   }, [backgroundSync]);
 
+  // ── Poll for data changes every 30s (picks up agent/API edits) ────────────
+  useEffect(() => {
+    const pollData = async () => {
+      try {
+        const fresh = await safeJsonFetch<AppState>("/api/state");
+        if (fresh?.projects) {
+          setState((cur) => ({
+            ...fresh,
+            // preserve local UI-only fields
+            googleCalendar: cur.googleCalendar,
+            googleDrive: cur.googleDrive,
+          }));
+        }
+      } catch {}
+    };
+    const pollInterval = setInterval(pollData, 30_000);
+    return () => clearInterval(pollInterval);
+  }, []);
+
   // ── Save handler (create + edit) ─────────────────────────────────────────
   const handleSave = async (data: ProjectFormState, id?: string) => {
     const parseTags = (tagsStr: string): string[] =>
