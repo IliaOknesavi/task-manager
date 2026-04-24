@@ -1174,6 +1174,42 @@ button {
   .drawer-meta {
     flex: 1;
     min-width: 0;
+    width: 100%;
+  }
+
+  /* Make drawer content single column on mobile */
+  .drawer-content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Hide native scrollbars in textarea on mobile */
+  .md-editor {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .md-editor::-webkit-scrollbar {
+    display: none;
+  }
+
+  .md-preview {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .md-preview::-webkit-scrollbar {
+    display: none;
+  }
+
+  .drawer-meta {
+    border-right: none;
+    border-bottom: none;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .drawer-meta::-webkit-scrollbar {
+    display: none;
   }
 }
 
