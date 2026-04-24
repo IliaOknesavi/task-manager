@@ -17,12 +17,14 @@ import {
   Flame,
   FolderKanban,
   GitBranchPlus,
+  HardDrive,
   LayoutGrid,
   ListTodo,
   PanelRightClose,
   PanelRightOpen,
   Plus,
   RotateCcw,
+  Settings,
   Sparkles,
   Target,
   Trash2,
@@ -663,6 +665,13 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
   const [drawer, setDrawer]         = useState<DrawerState | null>(null);
   const [showReset, setShowReset]   = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  useEffect(() => {
+    if (!showSettings) return;
+    const close = () => setShowSettings(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [showSettings]);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -872,6 +881,18 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
     setStatusMessage("All data cleared");
   };
 
+  // ── Manual refresh ────────────────────────────────────────────────────────
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const fresh = await safeJsonFetch<AppState>("/api/state");
+      if (fresh?.projects) setState(fresh);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
 
   const handleFocusChange = async (projectId: string) => {
     setState((cur) => ({ ...cur, currentProjectId: projectId }));
@@ -1018,24 +1039,58 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
                 <Plus size={18} />
                 New project
               </button>
-              {!state.googleCalendar.connected && (
-                <button className="primary-button" onClick={handleCalendarSync} type="button">
-                  Connect Calendar
-                </button>
-              )}
-              {!state.googleDrive?.connected && (
-                <button className="primary-button" onClick={() => { window.location.href = "/api/drive/connect"; }} type="button">
-                  Connect Drive
-                </button>
-              )}
               <button
-                className="reset-button"
-                onClick={() => setShowReset(true)}
+                className="icon-button"
+                onClick={handleRefresh}
                 type="button"
-                title="Reset all data"
+                title="Refresh data"
+                disabled={refreshing}
               >
-                <RotateCcw size={16} />
+                <RotateCcw size={16} style={{ transition: "transform 0.5s", transform: refreshing ? "rotate(360deg)" : "none" }} />
               </button>
+              <div style={{ position: "relative" }}>
+                <button
+                  className="icon-button"
+                  onClick={() => setShowSettings((v) => !v)}
+                  type="button"
+                  title="Settings"
+                >
+                  <Settings size={16} />
+                </button>
+                {showSettings && (
+                  <div className="settings-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="settings-menu-header">Settings</div>
+                    {!state.googleCalendar.connected && (
+                      <button className="settings-menu-item" onClick={handleCalendarSync} type="button">
+                        <CalendarDays size={15} /> Connect Calendar
+                      </button>
+                    )}
+                    {state.googleCalendar.connected && (
+                      <div className="settings-menu-item settings-menu-item--info">
+                        <CalendarDays size={15} /> Calendar connected
+                      </div>
+                    )}
+                    {!state.googleDrive?.connected && (
+                      <button className="settings-menu-item" onClick={() => { window.location.href = "/api/drive/connect"; }} type="button">
+                        <HardDrive size={15} /> Connect Drive
+                      </button>
+                    )}
+                    {state.googleDrive?.connected && (
+                      <div className="settings-menu-item settings-menu-item--info">
+                        <HardDrive size={15} /> Drive connected
+                      </div>
+                    )}
+                    <div className="settings-menu-divider" />
+                    <button
+                      className="settings-menu-item settings-menu-item--danger"
+                      onClick={() => { setShowSettings(false); setShowReset(true); }}
+                      type="button"
+                    >
+                      <Trash2 size={15} /> Reset all data
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
