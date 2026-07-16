@@ -4,7 +4,7 @@
  * Proxies requests to the Task Manager API (Railway or local).
  */
 
-const TASK_MANAGER_URL = process.env.TASK_MANAGER_URL || "https://task-manager-production-1073.up.railway.app";
+const TASK_MANAGER_URL = process.env.TASK_MANAGER_URL || "http://159.65.205.226:3000";
 
 async function callApi(op) {
   const response = await fetch(`${TASK_MANAGER_URL}/api/agent`, {

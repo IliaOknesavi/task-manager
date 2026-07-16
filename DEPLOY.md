@@ -1,3 +1,11 @@
+# Деплой TaskManager
+
+> **Текущий прод (с 16.07.2026):** DigitalOcean-дроплет `159.65.205.226`, порт 3000.
+> Docker-контейнер `taskmanager` (файловое хранилище, volume `/opt/taskmanager/{data,tasks}`).
+> Обновление: залить исходники в `/opt/taskmanager/src`, затем
+> `docker build -t taskmanager . && docker rm -f taskmanager && docker run -d --name taskmanager --restart unless-stopped -p 3000:3000 -v /opt/taskmanager/data:/app/data -v /opt/taskmanager/tasks:/app/tasks taskmanager`.
+> Railway-инструкция ниже оставлена на случай возврата (триал аккаунта истёк в 2026).
+
 # Деплой TaskManager на Railway
 
 ## Что получишь
