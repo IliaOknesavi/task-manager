@@ -33,6 +33,21 @@ export type ProgressLog = {
   createdAt: string;
 };
 
+export type ScheduleEntryStatus = "planned" | "done" | "skipped";
+
+export type ScheduleEntry = {
+  id: string;
+  date: string;       // YYYY-MM-DD
+  startTime: string;  // HH:MM (24h)
+  endTime: string;    // HH:MM, after startTime
+  title: string;
+  note?: string;
+  projectId?: string;
+  status: ScheduleEntryStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type GoogleCalendarState = {
   connected: boolean;
   calendarId?: string;
@@ -51,6 +66,7 @@ export type AppState = {
   googleDrive: GoogleDriveState;
   projects: Project[];
   progressLogs: ProgressLog[];
+  schedule: ScheduleEntry[];
 };
 
 export type StatusColumn = {
@@ -313,6 +329,72 @@ export const appendProgressLog = (
       },
     ],
   };
+};
+
+// ── Schedule helpers ─────────────────────────────────────────────────────────
+
+export const timeToMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(":").map(Number);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+};
+
+export const sortScheduleEntries = (entries: ScheduleEntry[]): ScheduleEntry[] =>
+  [...entries].sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    if (left.startTime !== right.startTime) return left.startTime.localeCompare(right.startTime);
+    return left.title.localeCompare(right.title);
+  });
+
+export const entriesForDate = (entries: ScheduleEntry[], date: string): ScheduleEntry[] =>
+  sortScheduleEntries(entries.filter((entry) => entry.date === date));
+
+export type LaidOutEntry = {
+  entry: ScheduleEntry;
+  lane: number;   // horizontal slot within the overlap cluster
+  lanes: number;  // total lanes in the cluster (width divisor)
+};
+
+/**
+ * Assigns overlapping same-day entries to side-by-side lanes.
+ * Entries in one connected overlap cluster share the same `lanes` divisor.
+ */
+export const layoutDayEntries = (entries: ScheduleEntry[]): LaidOutEntry[] => {
+  const sorted = sortScheduleEntries(entries);
+  const result: LaidOutEntry[] = [];
+
+  let cluster: LaidOutEntry[] = [];
+  let laneEnds: number[] = [];
+  let clusterMaxEnd = -1;
+
+  const closeCluster = () => {
+    for (const item of cluster) item.lanes = laneEnds.length;
+    cluster = [];
+    laneEnds = [];
+    clusterMaxEnd = -1;
+  };
+
+  for (const entry of sorted) {
+    const start = timeToMinutes(entry.startTime);
+    const end = timeToMinutes(entry.endTime);
+
+    if (cluster.length > 0 && start >= clusterMaxEnd) closeCluster();
+
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(end);
+    } else {
+      laneEnds[lane] = end;
+    }
+
+    const item: LaidOutEntry = { entry, lane, lanes: 1 };
+    cluster.push(item);
+    result.push(item);
+    clusterMaxEnd = Math.max(clusterMaxEnd, end);
+  }
+
+  closeCluster();
+  return result;
 };
 
 export const buildCalendarOperations = (

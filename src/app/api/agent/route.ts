@@ -9,7 +9,18 @@ import {
   buildProjectMdContent,
   getProjectNotes,
   setProjectNotes,
+  createScheduleEntry,
+  updateScheduleEntry,
+  deleteScheduleEntry,
+  listSchedule,
 } from "@/lib/storage";
+import {
+  dateSchema,
+  scheduleEntryInput,
+  scheduleEntryPatch,
+  buildScheduleEntry,
+  normalizeSchedulePatch,
+} from "@/lib/schedule-api";
 import type { Project, ProgressInput } from "@/lib/domain";
 
 // Slugify helper
@@ -54,6 +65,23 @@ const logProgressOp = z.object({
   progressDelta: z.number().optional(),
 });
 
+const scheduleListOp = z.object({
+  op: z.literal("schedule_list"),
+  date: dateSchema.optional(),
+  from: dateSchema.optional(),
+  to: dateSchema.optional(),
+});
+const scheduleCreateOp = z.object({
+  op: z.literal("schedule_create"),
+  entry: scheduleEntryInput,
+});
+const scheduleUpdateOp = z.object({
+  op: z.literal("schedule_update"),
+  id: z.string(),
+  patch: scheduleEntryPatch,
+});
+const scheduleDeleteOp = z.object({ op: z.literal("schedule_delete"), id: z.string() });
+
 const operationSchema = z.union([
   listOp,
   getOp,
@@ -63,6 +91,10 @@ const operationSchema = z.union([
   readNotesOp,
   writeNotesOp,
   logProgressOp,
+  scheduleListOp,
+  scheduleCreateOp,
+  scheduleUpdateOp,
+  scheduleDeleteOp,
 ]);
 
 type Operation = z.infer<typeof operationSchema>;
@@ -155,6 +187,39 @@ async function handleOperation(op: Operation): Promise<any> {
       };
       const state = await recordProgress(input);
       return state;
+    }
+
+    case "schedule_list": {
+      return listSchedule({ from: op.date ?? op.from, to: op.date ?? op.to });
+    }
+
+    case "schedule_create": {
+      const state = await loadAppState();
+      const entry = buildScheduleEntry(op.entry, state.projects);
+      return createScheduleEntry(entry);
+    }
+
+    case "schedule_update": {
+      const state = await loadAppState();
+      const existing = state.schedule.find((e) => e.id === op.id);
+      if (!existing) {
+        throw new Error(`Schedule entry ${op.id} not found`);
+      }
+
+      const patch = normalizeSchedulePatch(op.patch, existing, state.projects);
+      const updated = await updateScheduleEntry(op.id, patch);
+      if (!updated) {
+        throw new Error(`Schedule entry ${op.id} not found`);
+      }
+      return updated;
+    }
+
+    case "schedule_delete": {
+      const ok = await deleteScheduleEntry(op.id);
+      if (!ok) {
+        throw new Error(`Schedule entry ${op.id} not found`);
+      }
+      return { ok: true };
     }
   }
 }

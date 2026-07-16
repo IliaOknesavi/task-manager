@@ -12,7 +12,11 @@ import {
 import { format, parseISO } from "date-fns";
 import {
   ArrowRight,
+  CalendarClock,
   CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Flame,
   FolderKanban,
@@ -33,17 +37,22 @@ import {
 
 import {
   calculateDashboardStats,
+  entriesForDate,
   groupProjectsByPriority,
   groupProjectsByStatus,
+  layoutDayEntries,
+  timeToMinutes,
   type AppState,
   type Project,
   type ProjectPriority,
   type ProjectStatus,
+  type ScheduleEntry,
+  type ScheduleEntryStatus,
 } from "@/lib/domain";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type DashboardView = "status" | "priority" | "all" | "gantt";
+type DashboardView = "status" | "priority" | "all" | "gantt" | "schedule";
 
 type CreateDefaults = {
   status?: ProjectStatus;
@@ -67,6 +76,7 @@ const viewTabs: Array<{ id: DashboardView; label: string; icon: typeof LayoutGri
   { id: "priority", label: "By Priority",  icon: Sparkles    },
   { id: "all",      label: "All Projects", icon: ListTodo    },
   { id: "gantt",    label: "Gantt",        icon: CalendarDays },
+  { id: "schedule", label: "Schedule",     icon: CalendarClock },
 ];
 
 const priorityOptions: ProjectPriority[] = [
@@ -636,6 +646,223 @@ function ProjectDrawer({
   );
 }
 
+// ─── Schedule entry modal (create + edit) ────────────────────────────────────
+
+type ScheduleModalState =
+  | { kind: "create"; date: string; startTime: string; endTime: string }
+  | { kind: "edit"; entry: ScheduleEntry };
+
+type ScheduleFormState = {
+  title: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  note: string;
+  projectId: string;
+  status: ScheduleEntryStatus;
+};
+
+function ScheduleModal({
+  modal,
+  projects,
+  onClose,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  modal: ScheduleModalState;
+  projects: Project[];
+  onClose: () => void;
+  onCreate: (input: Omit<ScheduleFormState, "projectId" | "note"> & { note?: string; projectId?: string }) => Promise<void>;
+  onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const isEdit = modal.kind === "edit";
+  const [form, setForm] = useState<ScheduleFormState>(() =>
+    modal.kind === "edit"
+      ? {
+          title:     modal.entry.title,
+          date:      modal.entry.date,
+          startTime: modal.entry.startTime,
+          endTime:   modal.entry.endTime,
+          note:      modal.entry.note ?? "",
+          projectId: modal.entry.projectId ?? "",
+          status:    modal.entry.status,
+        }
+      : {
+          title:     "",
+          date:      modal.date,
+          startTime: modal.startTime,
+          endTime:   modal.endTime,
+          note:      "",
+          projectId: "",
+          status:    "planned",
+        },
+  );
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const set = <K extends keyof ScheduleFormState>(k: K, v: ScheduleFormState[K]) =>
+    setForm((c) => ({ ...c, [k]: v }));
+
+  const timesValid = Boolean(form.startTime && form.endTime && form.endTime > form.startTime);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!form.title.trim() || !form.date || !timesValid) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (modal.kind === "edit") {
+        await onUpdate(modal.entry.id, {
+          title:     form.title.trim(),
+          date:      form.date,
+          startTime: form.startTime,
+          endTime:   form.endTime,
+          status:    form.status,
+          note:      form.note.trim() || null,
+          projectId: form.projectId || null,
+        });
+      } else {
+        await onCreate({
+          title:     form.title.trim(),
+          date:      form.date,
+          startTime: form.startTime,
+          endTime:   form.endTime,
+          status:    form.status,
+          ...(form.note.trim() ? { note: form.note.trim() } : {}),
+          ...(form.projectId ? { projectId: form.projectId } : {}),
+        });
+      }
+      onClose();
+    } catch {
+      setError("Save failed — the entry may have been changed or deleted elsewhere. Refresh and retry.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (modal.kind !== "edit") return;
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    try {
+      await onDelete(modal.entry.id);
+      onClose();
+    } catch {
+      setError("Delete failed — refresh and retry.");
+    }
+  };
+
+  return (
+    <div
+      className="drawer-overlay"
+      ref={overlayRef}
+      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
+    >
+      <div className="modal-panel" role="dialog" aria-modal="true">
+        <div className="modal-header">
+          <h2>{isEdit ? "Edit entry" : "New schedule entry"}</h2>
+          <button className="modal-close" type="button" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <form className="stack-form" onSubmit={handleSubmit}>
+          <label>
+            Title *
+            <input
+              value={form.title}
+              onChange={(e) => set("title", e.target.value)}
+              placeholder="What are you doing in this slot?"
+              required
+              autoFocus
+            />
+          </label>
+
+          <div className="inline-fields">
+            <label>
+              Date
+              <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} required />
+            </label>
+            <label>
+              Status
+              <select value={form.status} onChange={(e) => set("status", e.target.value as ScheduleEntryStatus)}>
+                <option value="planned">Planned</option>
+                <option value="done">Done</option>
+                <option value="skipped">Skipped</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="inline-fields">
+            <label>
+              Start
+              <input type="time" step={900} value={form.startTime}
+                onChange={(e) => set("startTime", e.target.value)} required />
+            </label>
+            <label>
+              End
+              <input type="time" step={900} value={form.endTime}
+                onChange={(e) => set("endTime", e.target.value)} required />
+            </label>
+          </div>
+          {!timesValid && form.startTime && form.endTime && (
+            <p className="schedule-form-error">End time must be after start time.</p>
+          )}
+
+          <label>
+            Project
+            <select value={form.projectId} onChange={(e) => set("projectId", e.target.value)}>
+              <option value="">— No project —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.emoji ? `${p.emoji} ` : ""}{p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Note
+            <textarea
+              rows={2}
+              value={form.note}
+              onChange={(e) => set("note", e.target.value)}
+              placeholder="Optional details"
+            />
+          </label>
+
+          {error && <p className="schedule-form-error">{error}</p>}
+
+          <div className="modal-footer">
+            {isEdit && (
+              <button
+                className={`danger-button ${confirmDelete ? "danger-button--confirm" : ""}`}
+                type="button"
+                onClick={handleDelete}
+                style={{ marginRight: "auto" }}
+              >
+                <Trash2 size={16} />
+                {confirmDelete ? "Confirm delete" : "Delete"}
+              </button>
+            )}
+            <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
+            <button className="primary-button" type="submit" disabled={saving || !timesValid}>
+              {saving ? "Saving…" : isEdit ? "Save changes" : "Add to schedule"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Reset confirmation dialog ─────────────────────────────────────────────────
 
 function ResetDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => Promise<void> }) {
@@ -682,6 +909,7 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>();
   const [drawer, setDrawer]         = useState<DrawerState | null>(null);
+  const [scheduleModal, setScheduleModal] = useState<ScheduleModalState | null>(null);
   const [showReset, setShowReset]   = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -889,6 +1117,7 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
       currentProjectId: cur.currentProjectId === id ? undefined : cur.currentProjectId,
       projects:     cur.projects.filter((p) => p.id !== id),
       progressLogs: cur.progressLogs.filter((l) => l.projectId !== id),
+      schedule:     cur.schedule.map((e) => (e.projectId === id ? { ...e, projectId: undefined } : e)),
     }));
     setStatusMessage("Project deleted");
   };
@@ -896,7 +1125,7 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
   // ── Reset handler ─────────────────────────────────────────────────────────
   const handleReset = async () => {
     await safeJsonFetch("/api/reset", { method: "POST" });
-    setState({ currentProjectId: undefined, googleCalendar: { connected: false }, googleDrive: { connected: false }, projects: [], progressLogs: [] });
+    setState({ currentProjectId: undefined, googleCalendar: { connected: false }, googleDrive: { connected: false }, projects: [], progressLogs: [], schedule: [] });
     setStatusMessage("All data cleared");
   };
 
@@ -1002,6 +1231,58 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
     }
   }, []);
 
+  // ── Schedule handlers ─────────────────────────────────────────────────────
+  const handleScheduleCreate = useCallback(async (input: Record<string, unknown>) => {
+    const created = await safeJsonFetch<ScheduleEntry>("/api/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    setState((cur) => ({ ...cur, schedule: [...cur.schedule, created] }));
+    setStatusMessage(`Scheduled: ${created.title}`);
+  }, []);
+
+  const handleScheduleUpdate = useCallback(async (id: string, patch: Record<string, unknown>) => {
+    const updated = await safeJsonFetch<ScheduleEntry>(`/api/schedule/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    setState((cur) => ({
+      ...cur,
+      schedule: cur.schedule.map((e) => (e.id === id ? updated : e)),
+    }));
+  }, []);
+
+  const handleScheduleDelete = useCallback(async (id: string) => {
+    await safeJsonFetch(`/api/schedule/${id}`, { method: "DELETE" });
+    setState((cur) => ({ ...cur, schedule: cur.schedule.filter((e) => e.id !== id) }));
+    setStatusMessage("Schedule entry deleted");
+  }, []);
+
+  const handleScheduleToggle = useCallback(async (entry: ScheduleEntry) => {
+    try {
+      await handleScheduleUpdate(entry.id, {
+        status: entry.status === "done" ? "planned" : "done",
+      });
+    } catch {
+      setStatusMessage("Failed to update entry");
+    }
+  }, [handleScheduleUpdate]);
+
+  const handleScheduleTimeChange = useCallback(async (id: string, startTime: string, endTime: string) => {
+    // Optimistic move so the card doesn't jump back while the PATCH runs
+    setState((cur) => ({
+      ...cur,
+      schedule: cur.schedule.map((e) => (e.id === id ? { ...e, startTime, endTime } : e)),
+    }));
+    try {
+      await handleScheduleUpdate(id, { startTime, endTime });
+    } catch {
+      setStatusMessage("Failed to move entry — refresh to sync");
+    }
+  }, [handleScheduleUpdate]);
+
   const openCreate = (defaults?: CreateDefaults) => setDrawer({ kind: "create", defaults });
   const openEdit   = (project: Project)           => setDrawer({ kind: "edit", project });
   const closeDrawer = ()                          => setDrawer(null);
@@ -1023,6 +1304,18 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
           onSave={(data, id) => handleSave(data, id)}
           onDelete={handleDelete}
           onLogProgress={handleLogProgress}
+        />
+      )}
+
+      {/* Schedule entry modal */}
+      {scheduleModal && (
+        <ScheduleModal
+          modal={scheduleModal}
+          projects={state.projects}
+          onClose={() => setScheduleModal(null)}
+          onCreate={handleScheduleCreate}
+          onUpdate={handleScheduleUpdate}
+          onDelete={handleScheduleDelete}
         />
       )}
 
@@ -1156,6 +1449,17 @@ export function DashboardShell({ initialState }: DashboardShellProps) {
           {view === "priority" && <BoardColumns kind="priority" columns={priorityColumns} onCardClick={openEdit} onNewClick={(d) => openCreate(d)} onDrop={handleDrop} />}
           {view === "all"      && <ProjectsTable state={filteredState} onRowClick={openEdit} />}
           {view === "gantt"    && <GanttView projects={filteredState.projects} onBarClick={openEdit} onDateChange={handleGanttDateChange} />}
+          {view === "schedule" && (
+            <ScheduleView
+              schedule={state.schedule}
+              projects={state.projects}
+              onSlotClick={(date, startTime, endTime) =>
+                setScheduleModal({ kind: "create", date, startTime, endTime })}
+              onEntryClick={(entry) => setScheduleModal({ kind: "edit", entry })}
+              onToggleDone={handleScheduleToggle}
+              onTimeChange={handleScheduleTimeChange}
+            />
+          )}
         </section>
 
         <button
@@ -1735,5 +2039,276 @@ function GanttRow({
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── ScheduleView — hourly day planner ───────────────────────────────────────
+
+const HOUR_HEIGHT = 48;       // px per hour
+const SCHEDULE_SNAP = 15;     // minutes — drag/resize snap step
+const SCHEDULE_LABEL_W = 64;  // px — hour label gutter
+const DAY_END_MIN = 1439;     // 23:59 — the latest storable minute
+
+const SCHEDULE_NEUTRAL_COLORS = {
+  bg: "linear-gradient(135deg,#f1f3f6,#e4e8ee)",
+  border: "#a9b4c2",
+  text: "#3c4757",
+};
+
+const minutesToTime = (mins: number) =>
+  `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+
+const localDateStr = (d: Date) => format(d, "yyyy-MM-dd");
+
+/** Shift a YYYY-MM-DD string by n days in LOCAL time (no UTC drift). */
+const shiftDateStr = (dateStr: string, n: number) => {
+  const d = parseISO(dateStr);
+  d.setDate(d.getDate() + n);
+  return localDateStr(d);
+};
+
+function ScheduleView({
+  schedule,
+  projects,
+  onSlotClick,
+  onEntryClick,
+  onToggleDone,
+  onTimeChange,
+}: {
+  schedule: ScheduleEntry[];
+  projects: Project[];
+  onSlotClick: (date: string, startTime: string, endTime: string) => void;
+  onEntryClick: (entry: ScheduleEntry) => void;
+  onToggleDone: (entry: ScheduleEntry) => void;
+  onTimeChange: (id: string, startTime: string, endTime: string) => void;
+}) {
+  const [date, setDate] = useState(() => localDateStr(new Date()));
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Re-render every minute so the "now" line moves
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const dayEntries = entriesForDate(schedule, date);
+  const laidOut = layoutDayEntries(dayEntries);
+  const now = new Date(nowTick);
+  const today = localDateStr(now);
+  const isToday = date === today;
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // Scroll to the first entry (or 08:00) when the day changes
+  useEffect(() => {
+    const first = dayEntries[0] ? timeToMinutes(dayEntries[0].startTime) : 8 * 60;
+    const targetMin = Math.min(first, 8 * 60);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = Math.max(0, (targetMin / 60) * HOUR_HEIGHT - 8);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
+
+  // ── Drag: move whole entry / resize bottom edge, 15-min snap ─────────────
+  const dragRef = useRef<{
+    id: string;
+    mode: "move" | "resize";
+    startY: number;
+    origStart: number;
+    origEnd: number;
+    moved: boolean;
+  } | null>(null);
+  const [dragLive, setDragLive] = useState<{ id: string; start: number; end: number } | null>(null);
+  // Written synchronously in onMove — onUp may run before React re-renders
+  const dragLiveRef = useRef(dragLive);
+  const suppressClickRef = useRef(false);
+
+  const startEntryDrag = (entry: ScheduleEntry, mode: "move" | "resize", e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = {
+      id: entry.id,
+      mode,
+      startY: e.clientY,
+      origStart: timeToMinutes(entry.startTime),
+      origEnd: timeToMinutes(entry.endTime),
+      moved: false,
+    };
+
+    const setLive = (live: { id: string; start: number; end: number } | null) => {
+      dragLiveRef.current = live;
+      setDragLive(live);
+    };
+
+    function onUp() {
+      const drag = dragRef.current;
+      const live = dragLiveRef.current;
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (drag?.moved && live) {
+        suppressClickRef.current = true;
+        setTimeout(() => { suppressClickRef.current = false; }, 0);
+        onTimeChange(drag.id, minutesToTime(live.start), minutesToTime(live.end));
+      }
+      setLive(null);
+    }
+
+    function onMove(me: MouseEvent) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      // Mouse released outside the window (Cmd+Tab etc.) — finish the drag
+      if (me.buttons === 0) { onUp(); return; }
+      const deltaMin =
+        Math.round(((me.clientY - drag.startY) / HOUR_HEIGHT) * 60 / SCHEDULE_SNAP) * SCHEDULE_SNAP;
+      if (deltaMin !== 0) drag.moved = true;
+      if (drag.mode === "move") {
+        const duration = drag.origEnd - drag.origStart;
+        const start = Math.max(0, Math.min(DAY_END_MIN - duration, drag.origStart + deltaMin));
+        setLive({ id: drag.id, start, end: start + duration });
+      } else {
+        const end = Math.min(DAY_END_MIN, Math.max(drag.origStart + SCHEDULE_SNAP, drag.origEnd + deltaMin));
+        setLive({ id: drag.id, start: drag.origStart, end });
+      }
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressClickRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const hour = Math.min(23, Math.max(0, Math.floor(y / HOUR_HEIGHT)));
+    onSlotClick(date, minutesToTime(hour * 60), minutesToTime(Math.min(hour * 60 + 60, DAY_END_MIN)));
+  };
+
+  return (
+    <section className="schedule-shell">
+      <div className="schedule-toolbar">
+        <button className="icon-button" type="button" title="Previous day"
+          onClick={() => setDate(shiftDateStr(date, -1))}>
+          <ChevronLeft size={16} />
+        </button>
+        <input
+          className="schedule-date-input"
+          type="date"
+          value={date}
+          onChange={(e) => { if (e.target.value) setDate(e.target.value); }}
+        />
+        <button className="icon-button" type="button" title="Next day"
+          onClick={() => setDate(shiftDateStr(date, 1))}>
+          <ChevronRight size={16} />
+        </button>
+        <button className="secondary-button" type="button" disabled={isToday}
+          onClick={() => setDate(today)}>
+          Today
+        </button>
+        <span className="schedule-day-label">{format(parseISO(date), "EEEE, MMM d")}</span>
+        <span style={{ flex: 1 }} />
+        <button className="primary-button" type="button"
+          onClick={() => onSlotClick(date, "09:00", "10:00")}>
+          <Plus size={16} />
+          Add entry
+        </button>
+      </div>
+
+      {dayEntries.length === 0 && (
+        <p className="schedule-empty">Nothing planned — click an hour slot to add an entry.</p>
+      )}
+
+      <div className="schedule-scroll" ref={scrollRef}>
+        <div className="schedule-grid" style={{ height: 24 * HOUR_HEIGHT }}>
+          {Array.from({ length: 24 }, (_, hour) => (
+            <div key={hour} className="schedule-hour" style={{ top: hour * HOUR_HEIGHT, height: HOUR_HEIGHT }}>
+              <span className={`schedule-hour-label${hour === 0 ? " schedule-hour-label--first" : ""}`}>
+                {minutesToTime(hour * 60)}
+              </span>
+            </div>
+          ))}
+
+          <div
+            className="schedule-entries"
+            style={{ left: SCHEDULE_LABEL_W }}
+            onClick={handleGridClick}
+          >
+            {laidOut.map(({ entry, lane, lanes }) => {
+              const live = dragLive?.id === entry.id ? dragLive : null;
+              const startMin = live ? live.start : timeToMinutes(entry.startTime);
+              const endMin = live ? live.end : timeToMinutes(entry.endTime);
+              const project = entry.projectId
+                ? projects.find((p) => p.id === entry.projectId)
+                : undefined;
+              const colors = project
+                ? GANTT_BAR_COLORS[project.priority] ?? SCHEDULE_NEUTRAL_COLORS
+                : SCHEDULE_NEUTRAL_COLORS;
+              const isDone = entry.status === "done";
+
+              return (
+                <div
+                  key={entry.id}
+                  className={[
+                    "schedule-entry",
+                    isDone ? "schedule-entry--done" : "",
+                    entry.status === "skipped" ? "schedule-entry--skipped" : "",
+                  ].filter(Boolean).join(" ")}
+                  style={{
+                    top: (startMin / 60) * HOUR_HEIGHT,
+                    height: Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT - 2, 18),
+                    left: `${(lane / lanes) * 100}%`,
+                    width: `calc(${100 / lanes}% - 6px)`,
+                    background: colors.bg,
+                    borderColor: colors.border,
+                    color: colors.text,
+                    zIndex: live ? 20 : 5,
+                    cursor: live ? "grabbing" : "grab",
+                  }}
+                  onMouseDown={(e) => startEntryDrag(entry, "move", e)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!suppressClickRef.current) onEntryClick(entry);
+                  }}
+                >
+                  <span className="schedule-entry-time">
+                    {minutesToTime(startMin)}–{minutesToTime(endMin)}
+                  </span>
+                  <span className="schedule-entry-title">{entry.title}</span>
+                  {project && (
+                    <span className="schedule-entry-project">
+                      {project.emoji ? `${project.emoji} ` : ""}{project.name}
+                    </span>
+                  )}
+                  {entry.note && <span className="schedule-entry-note">{entry.note}</span>}
+
+                  <button
+                    className={`schedule-done-btn ${isDone ? "schedule-done-btn--active" : ""}`}
+                    type="button"
+                    title={isDone ? "Mark as planned" : "Mark as done"}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onToggleDone(entry); }}
+                  >
+                    <Check size={12} />
+                  </button>
+
+                  <div
+                    className="schedule-resize-handle"
+                    onMouseDown={(e) => startEntryDrag(entry, "resize", e)}
+                  />
+                </div>
+              );
+            })}
+
+            {isToday && (
+              <div
+                className="schedule-now-line"
+                style={{ top: (nowMinutes / 60) * HOUR_HEIGHT }}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }

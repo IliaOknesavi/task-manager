@@ -66,6 +66,7 @@ const state: AppState = {
       createdAt: "2026-04-22T09:00:00.000Z",
     },
   ],
+  schedule: [],
 };
 
 describe("DashboardShell", () => {

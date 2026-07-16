@@ -3,9 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 
-import type { AppState, ProgressInput, ProgressLog, Project } from "@/lib/domain";
+import type { AppState, ProgressInput, ProgressLog, Project, ScheduleEntry } from "@/lib/domain";
 import type { GoogleDriveState } from "@/lib/domain";
-import { appendProgressLog } from "@/lib/domain";
+import { appendProgressLog, sortScheduleEntries } from "@/lib/domain";
 import { getPool, runMigrations } from "@/lib/db";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,6 +43,19 @@ const projectSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
+const scheduleEntrySchema = z.object({
+  id: z.string(),
+  date: z.string(),
+  startTime: z.string(),
+  endTime: z.string(),
+  title: z.string(),
+  note: z.string().optional(),
+  projectId: z.string().optional(),
+  status: z.enum(["planned", "done", "skipped"]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 const progressLogSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -66,6 +79,7 @@ const appStateSchema = z.object({
   }).optional(),
   projects: z.array(projectSchema),
   progressLogs: z.array(progressLogSchema),
+  schedule: z.array(scheduleEntrySchema).default([]),
 });
 
 // ── Seed data ─────────────────────────────────────────────────────────────────
@@ -120,6 +134,7 @@ export const createSeedState = (): AppState => ({
   googleDrive: { connected: false },
   projects: seedProjects,
   progressLogs: seedLogs,
+  schedule: [],
 });
 
 // ── Markdown content builder ──────────────────────────────────────────────────
@@ -196,13 +211,27 @@ const rowToProject = (row: Record<string, unknown>): Project => ({
   tags: (row.tags as string[]) ?? [],
 });
 
+const rowToScheduleEntry = (row: Record<string, unknown>): ScheduleEntry => ({
+  id: row.id as string,
+  date: row.date as string,
+  startTime: row.start_time as string,
+  endTime: row.end_time as string,
+  title: row.title as string,
+  note: (row.note as string) || undefined,
+  projectId: (row.project_id as string) || undefined,
+  status: row.status as ScheduleEntry["status"],
+  createdAt: row.created_at as string,
+  updatedAt: row.updated_at as string,
+});
+
 const pgLoadAppState = async (): Promise<AppState> => {
   const db = getPool()!;
   await ensureMigrated();
 
-  const [projectsRes, logsRes, stateRes] = await Promise.all([
+  const [projectsRes, logsRes, scheduleRes, stateRes] = await Promise.all([
     db.query("SELECT * FROM projects ORDER BY updated_at DESC"),
     db.query("SELECT * FROM progress_logs ORDER BY created_at DESC"),
+    db.query("SELECT * FROM schedule_entries ORDER BY date, start_time"),
     db.query("SELECT value FROM app_state WHERE key = 'main'"),
   ]);
 
@@ -221,6 +250,7 @@ const pgLoadAppState = async (): Promise<AppState> => {
       source: r.source as ProgressLog["source"],
       createdAt: r.created_at as string,
     })),
+    schedule: scheduleRes.rows.map(rowToScheduleEntry),
   };
 };
 
@@ -281,6 +311,30 @@ const pgGetNotes = async (id: string): Promise<string> => {
 const pgSetNotes = async (id: string, notes: string): Promise<void> => {
   const db = getPool()!;
   await db.query("UPDATE projects SET notes = $2 WHERE id = $1", [id, notes]);
+};
+
+const pgUpsertScheduleEntry = async (entry: ScheduleEntry): Promise<void> => {
+  const db = getPool()!;
+  await db.query(
+    `INSERT INTO schedule_entries
+       (id, date, start_time, end_time, title, note, project_id, status, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET
+       date=$2, start_time=$3, end_time=$4, title=$5, note=$6, project_id=$7,
+       status=$8, created_at=$9, updated_at=$10`,
+    [
+      entry.id, entry.date, entry.startTime, entry.endTime, entry.title,
+      entry.note ?? null, entry.projectId ?? null, entry.status,
+      entry.createdAt, entry.updatedAt,
+    ],
+  );
+};
+
+const pgDeleteScheduleEntry = async (id: string): Promise<boolean> => {
+  const db = getPool()!;
+  await ensureMigrated();
+  const res = await db.query("DELETE FROM schedule_entries WHERE id = $1", [id]);
+  return (res.rowCount ?? 0) > 0;
 };
 
 const pgInsertLog = async (log: ProgressLog): Promise<void> => {
@@ -407,12 +461,118 @@ export const deleteProject = async (
           currentProjectId: state.currentProjectId === id ? undefined : state.currentProjectId,
           projects: state.projects.filter((p) => p.id !== id),
           progressLogs: state.progressLogs.filter((l) => l.projectId !== id),
+          // schedule entries survive project deletion, but drop the dangling link
+          schedule: state.schedule.map((e) =>
+            e.projectId === id ? { ...e, projectId: undefined } : e,
+          ),
         },
         result: true,
       };
     },
     filePath,
   );
+};
+
+// ── Schedule CRUD ─────────────────────────────────────────────────────────────
+
+export const createScheduleEntry = async (
+  entry: ScheduleEntry,
+  filePath = getStorageFilePath(),
+): Promise<ScheduleEntry> => {
+  if (isPostgres()) {
+    await ensureMigrated();
+    await pgUpsertScheduleEntry(entry);
+    return entry;
+  }
+  return updateAppState(
+    (state) => ({
+      state: { ...state, schedule: [...state.schedule, entry] },
+      result: entry,
+    }),
+    filePath,
+  );
+};
+
+export const updateScheduleEntry = async (
+  id: string,
+  patch: Partial<Omit<ScheduleEntry, "id">>,
+  filePath = getStorageFilePath(),
+): Promise<ScheduleEntry | null> => {
+  if (isPostgres()) {
+    const state = await pgLoadAppState();
+    const existing = state.schedule.find((e) => e.id === id);
+    if (!existing) return null;
+    const updated: ScheduleEntry = { ...existing, ...patch, id, updatedAt: new Date().toISOString() };
+    await pgUpsertScheduleEntry(updated);
+    return updated;
+  }
+  return updateAppState(
+    (state) => {
+      const existing = state.schedule.find((e) => e.id === id);
+      if (!existing) return { state, result: null };
+      const updated: ScheduleEntry = { ...existing, ...patch, id, updatedAt: new Date().toISOString() };
+      return {
+        state: { ...state, schedule: state.schedule.map((e) => (e.id === id ? updated : e)) },
+        result: updated,
+      };
+    },
+    filePath,
+  );
+};
+
+export const deleteScheduleEntry = async (
+  id: string,
+  filePath = getStorageFilePath(),
+): Promise<boolean> => {
+  if (isPostgres()) return pgDeleteScheduleEntry(id);
+  return updateAppState(
+    (state) => {
+      const exists = state.schedule.some((e) => e.id === id);
+      if (!exists) return { state, result: false };
+      return {
+        state: { ...state, schedule: state.schedule.filter((e) => e.id !== id) },
+        result: true,
+      };
+    },
+    filePath,
+  );
+};
+
+export const listSchedule = async (
+  range: { from?: string; to?: string } = {},
+  filePath = getStorageFilePath(),
+): Promise<ScheduleEntry[]> => {
+  const state = await loadAppState(filePath);
+  return sortScheduleEntries(
+    state.schedule.filter(
+      (e) => (!range.from || e.date >= range.from) && (!range.to || e.date <= range.to),
+    ),
+  );
+};
+
+/** Wipe everything — used by POST /api/reset. In PG mode the rows must be
+ *  deleted explicitly: saveAppState only writes meta and upserts. */
+export const resetAllData = async (filePath = getStorageFilePath()): Promise<void> => {
+  const empty: AppState = {
+    currentProjectId: undefined,
+    googleCalendar: { connected: false },
+    googleDrive: { connected: false },
+    projects: [],
+    progressLogs: [],
+    schedule: [],
+  };
+
+  if (isPostgres()) {
+    const db = getPool()!;
+    await ensureMigrated();
+    await db.query("DELETE FROM schedule_entries");
+    await db.query("DELETE FROM progress_logs");
+    await db.query("DELETE FROM projects");
+    await pgSaveAppState(empty);
+    return;
+  }
+
+  await saveAppState(filePath, empty);
 };
 
 export const recordProgress = async (
@@ -561,6 +721,10 @@ export const migrateFromFile = async (filePath = getStorageFilePath()): Promise<
 
   for (const log of fileState.progressLogs) {
     await pgInsertLog(log);
+  }
+
+  for (const entry of fileState.schedule) {
+    await pgUpsertScheduleEntry(entry);
   }
 
   return { ok: true, message: `Migrated ${fileState.projects.length} projects, ${fileState.progressLogs.length} logs` };

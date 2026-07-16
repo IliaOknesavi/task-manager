@@ -2,19 +2,10 @@
  * POST /api/reset — wipe all projects and logs, reset to empty state
  */
 import { rm } from "node:fs/promises";
-import { saveAppState, getStorageFilePath, getTasksDir } from "@/lib/storage";
-import type { AppState } from "@/lib/domain";
+import { resetAllData, getTasksDir } from "@/lib/storage";
 
 export async function POST() {
-  const empty: AppState = {
-    currentProjectId: undefined,
-    googleCalendar: { connected: false },
-    googleDrive: { connected: false },
-    projects: [],
-    progressLogs: [],
-  };
-
-  await saveAppState(getStorageFilePath(), empty);
+  await resetAllData();
 
   // Remove all task MD files
   try {

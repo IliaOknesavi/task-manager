@@ -103,6 +103,7 @@ const baseState: AppState = {
       createdAt: "2026-04-22T07:45:00.000Z",
     },
   ],
+  schedule: [],
 };
 
 describe("groupProjectsByStatus", () => {

@@ -69,5 +69,20 @@ export const runMigrations = async (): Promise<void> => {
       source      TEXT NOT NULL DEFAULT 'manual',
       created_at  TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS schedule_entries (
+      id          TEXT PRIMARY KEY,
+      date        TEXT NOT NULL,
+      start_time  TEXT NOT NULL,
+      end_time    TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      note        TEXT,
+      project_id  TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      status      TEXT NOT NULL DEFAULT 'planned',
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedule_entries_date ON schedule_entries (date);
   `);
 };

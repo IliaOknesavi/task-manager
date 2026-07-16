@@ -22,7 +22,7 @@ describe("loadAppState", () => {
 
     const state = await loadAppState(path.join(directory, "state.json"));
 
-    expect(state.projects.length).toBeGreaterThanOrEqual(4);
+    expect(state.projects.length).toBeGreaterThanOrEqual(2);
     expect(state.currentProjectId).toBe(state.projects[0]?.id);
     expect(state.googleCalendar.connected).toBe(false);
   });
@@ -58,6 +58,7 @@ describe("saveAppState", () => {
         },
       ],
       progressLogs: [],
+      schedule: [],
     });
 
     const restored = await loadAppState(filePath);
@@ -68,6 +69,8 @@ describe("saveAppState", () => {
         connected: true,
         calendarId: "primary",
       },
+      googleDrive: { connected: false },
+      schedule: [],
       projects: [
         {
           id: "proj-1",

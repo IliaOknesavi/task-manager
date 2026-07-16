@@ -101,6 +101,60 @@ const tools = [
       required: ["projectId", "summary", "minutes"],
     },
   },
+  {
+    name: "list_schedule",
+    description: "Получить почасовое расписание. Без аргументов — всё; date — один день; from/to — диапазон (включительно)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        from: { type: "string", description: "YYYY-MM-DD" },
+        to: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "create_schedule_entry",
+    description: "Добавить пункт в почасовое расписание (для плана на день вызывай несколько раз)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        startTime: { type: "string", description: "HH:MM (24ч)" },
+        endTime: { type: "string", description: "HH:MM, позже startTime" },
+        title: { type: "string" },
+        note: { type: "string" },
+        projectId: { type: "string", description: "ID связанного проекта (опционально)" },
+        status: { type: "string", enum: ["planned", "done", "skipped"] },
+      },
+      required: ["date", "startTime", "endTime", "title"],
+    },
+  },
+  {
+    name: "update_schedule_entry",
+    description: "Изменить пункт расписания (перенести, переименовать, отметить done/skipped)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        patch: {
+          type: "object",
+          description: "Любые из полей: date, startTime, endTime, title, note, projectId, status",
+        },
+      },
+      required: ["id", "patch"],
+    },
+  },
+  {
+    name: "delete_schedule_entry",
+    description: "Удалить пункт расписания",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
 ];
 
 async function handleToolCall(name, args) {
@@ -127,6 +181,14 @@ async function handleToolCall(name, args) {
         minutes: args.minutes,
         progressDelta: args.progressDelta,
       });
+    case "list_schedule":
+      return callApi({ op: "schedule_list", date: args.date, from: args.from, to: args.to });
+    case "create_schedule_entry":
+      return callApi({ op: "schedule_create", entry: args });
+    case "update_schedule_entry":
+      return callApi({ op: "schedule_update", id: args.id, patch: args.patch });
+    case "delete_schedule_entry":
+      return callApi({ op: "schedule_delete", id: args.id });
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
